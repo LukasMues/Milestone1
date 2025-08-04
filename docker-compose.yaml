@@ -1,0 +1,27 @@
+version: "3.9"
+
+services:
+  nginx:
+    build: ./nginx
+    container_name: contnginx2-m1-tm
+    ports:
+      - "8085:80"
+    depends_on:
+      - mongo
+    networks:
+      - milestone-net
+
+  mongo:
+    image: mongo
+    container_name: contmongo-m1-tm
+    volumes:
+      - mongo-data:/data/db
+      - ./mongo-init/init.js:/docker-entrypoint-initdb.d/init.js:ro
+    networks:
+      - milestone-net
+
+volumes:
+  mongo-data:
+
+networks:
+  milestone-net:
