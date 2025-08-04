@@ -1,0 +1,11 @@
+# Connect to MongoDB and update the name
+docker exec -it contmongo-m1-tm mongosh milestoneDB
+
+# Once inside the MongoDB shell, run:
+db.students.updateOne({}, {$set: {name: "Your New Name"}})
+
+# To verify the change:
+db.students.findOne()
+
+# Exit the shell:
+exit
