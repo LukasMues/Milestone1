@@ -1,19 +1,32 @@
 version: "3.9"
 
 services:
-  nginx:
-    build: ./nginx
-    container_name: contnginx2-m1-tm
+  # Reverse Proxy (Load Balancer)
+  reverse-proxy:
+    build: ./reverse-proxy
+    container_name: milestone1-reverse-proxy
     ports:
-      - "8085:80"
+      - "8085:80"  # Public entrypoint - same as before
+    depends_on:
+      - web
+    networks:
+      - milestone-net
+
+  # Multiple NGINX Web Containers (Horizontally Scaled)
+  web:
+    build: ./nginx
+    # Remove container_name - Docker Compose will auto-generate unique names for replicas
     depends_on:
       - mongo
     networks:
       - milestone-net
+    deploy:
+      replicas: 3  # Scale to 3 instances
 
+  # MongoDB (Single Instance)
   mongo:
     image: mongo
-    container_name: contmongo-m1-tm
+    container_name: milestone1-mongo
     volumes:
       - mongo-data:/data/db
       - ./mongo-init/init.js:/docker-entrypoint-initdb.d/init.js:ro
