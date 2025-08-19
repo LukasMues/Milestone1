@@ -4,29 +4,45 @@ services:
   # Reverse Proxy (Load Balancer)
   reverse-proxy:
     build: ./reverse-proxy
-    container_name: milestone1-reverse-proxy
+    container_name: contnginx-m1-lm
     ports:
       - "8085:80"  # Public entrypoint - same as before
     depends_on:
-      - web
+      - web1
+      - web2
+      - web3
     networks:
       - milestone-net
 
-  # Multiple NGINX Web Containers (Horizontally Scaled)
-  web:
+  # Multiple NGINX Web Containers (Individual Services)
+  web1:
     build: ./nginx
-    # Remove container_name - Docker Compose will auto-generate unique names for replicas
+    container_name: contweb-m1-lm1
     depends_on:
       - mongo
     networks:
       - milestone-net
-    deploy:
-      replicas: 3  # Scale to 3 instances
+
+  web2:
+    build: ./nginx
+    container_name: contweb-m1-lm2
+    depends_on:
+      - mongo
+    networks:
+      - milestone-net
+
+  web3:
+    build: ./nginx
+    container_name: contweb-m1-lm3
+    depends_on:
+      - mongo
+    networks:
+      - milestone-net
 
   # MongoDB (Single Instance)
   mongo:
     image: mongo
-    container_name: milestone1-mongo
+    container_name: contmongo-m1-lm
     volumes:
       - mongo-data:/data/db
       - ./mongo-init/init.js:/docker-entrypoint-initdb.d/init.js:ro

@@ -10,6 +10,8 @@ This project demonstrates a load-balanced web application using Docker Compose w
 - [How It Works](#how-it-works)
 - [Testing Load Balancing](#testing-load-balancing)
 - [Troubleshooting](#troubleshooting)
+- [AI Prompts and Responses](#ai-prompts-and-responses)
+- [AI Reflection](#ai-reflection)
 
 ## Overview
 
@@ -51,29 +53,45 @@ services:
   # Reverse Proxy (Load Balancer)
   reverse-proxy:
     build: ./reverse-proxy
-    container_name: milestone1-reverse-proxy
+    container_name: contnginx-m1-lm
     ports:
       - "8085:80"  # Public entrypoint - same as before
     depends_on:
-      - web
+      - web1
+      - web2
+      - web3
     networks:
       - milestone-net
 
-  # Multiple NGINX Web Containers (Horizontally Scaled)
-  web:
+  # Multiple NGINX Web Containers (Individual Services)
+  web1:
     build: ./nginx
-    # Remove container_name - Docker Compose will auto-generate unique names for replicas
+    container_name: contweb-m1-lm1
     depends_on:
       - mongo
     networks:
       - milestone-net
-    deploy:
-      replicas: 3  # Scale to 3 instances
+
+  web2:
+    build: ./nginx
+    container_name: contweb-m1-lm2
+    depends_on:
+      - mongo
+    networks:
+      - milestone-net
+
+  web3:
+    build: ./nginx
+    container_name: contweb-m1-lm3
+    depends_on:
+      - mongo
+    networks:
+      - milestone-net
 
   # MongoDB (Single Instance)
   mongo:
     image: mongo
-    container_name: milestone1-mongo
+    container_name: contmongo-m1-lm
     volumes:
       - mongo-data:/data/db
       - ./mongo-init/init.js:/docker-entrypoint-initdb.d/init.js:ro
@@ -96,25 +114,26 @@ networks:
 
 1. **reverse-proxy service:**
    - `build: ./reverse-proxy` - Builds from the reverse-proxy directory
-   - `container_name: milestone1-reverse-proxy` - Gives the container a specific name
+   - `container_name: contnginx-m1-lm` - Gives the container a specific name
    - `ports: - "8085:80"` - Maps host port 8085 to container port 80
-   - `depends_on: - web` - Ensures web service starts before reverse-proxy
+   - `depends_on: - web1, web2, web3` - Ensures all web services start before reverse-proxy
    - `networks: - milestone-net` - Connects to custom network
 
-2. **web service:**
+2. **web1, web2, web3 services:**
    - `build: ./nginx` - Builds from the nginx directory
-   - No `container_name` - Docker Compose auto-generates names for replicas
+   - `container_name: contweb-m1-lm1, contweb-m1-lm2, contweb-m1-lm3` - Individual container names
    - `depends_on: - mongo` - Ensures MongoDB starts first
-   - `deploy: replicas: 3` - Creates 3 instances of this service
+   - Each service represents one web container instance
 
 3. **mongo service:**
    - `image: mongo` - Uses official MongoDB image
+   - `container_name: contmongo-m1-lm` - Gives the container a specific name
    - `volumes:` - Mounts data directory and initialization script
    - `./mongo-init/init.js:/docker-entrypoint-initdb.d/init.js:ro` - Mounts init script as read-only
 
 **Networks and Volumes:**
 - `milestone-net` - Custom network for service communication
-- `mongo-data` - Persistent volume for MongoDB data
+- `mongo-data` - Persistent volume for MongoDB data (survives container restarts)
 
 ### Step 3: Create Directory Structure
 
@@ -139,7 +158,9 @@ events {
 
 http {
     upstream web_backend {
-        server web:80;
+        server web1:80;
+        server web2:80;
+        server web3:80;
     }
 
     server {
@@ -176,7 +197,7 @@ http {
 
 **HTTP block:**
 - `upstream web_backend` - Defines a group of backend servers
-- `server web:80` - Points to the web service on port 80
+- `server web1:80, web2:80, web3:80` - Points to all three web services on port 80
 
 **Server block:**
 - `listen 80` - Listens on port 80
@@ -195,63 +216,82 @@ Create `reverse-proxy/Dockerfile`:
 
 ```dockerfile
 FROM nginx:alpine
+
+# Copy the nginx configuration
 COPY nginx.conf /etc/nginx/nginx.conf
+
+# Expose port 80
+EXPOSE 80
+
+# Start nginx
+CMD ["nginx", "-g", "daemon off;"]
 ```
 
 **Explanation:**
 - `FROM nginx:alpine` - Uses lightweight Alpine Linux NGINX image
 - `COPY nginx.conf /etc/nginx/nginx.conf` - Copies our custom configuration
+- `EXPOSE 80` - Documents that the container listens on port 80
+- `CMD ["nginx", "-g", "daemon off;"]` - Starts NGINX in foreground mode
 
 ### Step 6: Create MongoDB Initialization Script
 
 Create `mongo-init/init.js`:
 
 ```javascript
-db = db.getSiblingDB('milestoneDB');
-
-db.students.insertOne({
-    name: "Lukas Mues",
-    studentId: "12345",
-    course: "Linux Webservices"
-});
-
-print("Database initialized with student data");
+db = db.getSiblingDB("milestoneDB");
+db.students.drop();
+db.students.insertOne({ name: "Lukas Mues" });
 ```
 
 **Explanation:**
-- `db.getSiblingDB('milestoneDB')` - Creates/accesses the milestoneDB database
-- `db.students.insertOne()` - Inserts a student document
-- The document contains name, studentId, and course fields
-- `print()` - Outputs a message when initialization completes
+- `db.getSiblingDB("milestoneDB")` - Creates/accesses the milestoneDB database
+- `db.students.drop()` - Removes any existing data to ensure clean state
+- `db.students.insertOne({ name: "Lukas Mues" })` - Inserts a student document with just the name
+- **Important**: This script only runs on first startup when the volume is empty
+- On subsequent restarts, the data persists and this script is NOT executed
 
 ### Step 7: Create NGINX Web Container Files
 
 Create `nginx/Dockerfile`:
 
 ```dockerfile
-FROM nginx:alpine
+FROM ubuntu:24.04
 
-# Install MongoDB client tools
-RUN apk add --no-cache mongodb-tools
+# Install required packages
+RUN apt update && apt install -y nginx curl wget gnupg
 
-# Copy entrypoint script
+# Add MongoDB GPG key and repository for mongosh
+RUN wget -qO - https://www.mongodb.org/static/pgp/server-7.0.asc | apt-key add - && \
+    echo "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse" | tee /etc/apt/sources.list.d/mongodb-org-7.0.list
+
+# Install MongoDB shell (mongosh)
+RUN apt update && apt install -y mongodb-mongosh
+
+# Set working directory
+WORKDIR /var/www/html
+
+# Copy the entrypoint script
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Copy initial HTML file
-COPY index.html /var/www/html/index.html
+# Expose port 80
+EXPOSE 80
 
-# Set entrypoint
-ENTRYPOINT ["/entrypoint.sh"]
+# Use the entrypoint script
+CMD ["/entrypoint.sh"]
 ```
 
 **Explanation:**
-- `FROM nginx:alpine` - Uses Alpine Linux NGINX image
-- `RUN apk add --no-cache mongodb-tools` - Installs MongoDB client tools
+- `FROM ubuntu:24.04` - Uses Ubuntu 24.04 as base image
+- `RUN apt update && apt install -y nginx curl wget gnupg` - Installs NGINX and required tools
+- `RUN wget -qO - https://www.mongodb.org/static/pgp/server-7.0.asc | apt-key add -` - Adds MongoDB GPG key
+- `echo "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse"` - Adds MongoDB repository
+- `RUN apt update && apt install -y mongodb-mongosh` - Installs MongoDB shell (mongosh)
+- `WORKDIR /var/www/html` - Sets the working directory
 - `COPY entrypoint.sh /entrypoint.sh` - Copies our startup script
 - `RUN chmod +x /entrypoint.sh` - Makes the script executable
-- `COPY index.html /var/www/html/index.html` - Copies initial HTML file
-- `ENTRYPOINT ["/entrypoint.sh"]` - Sets the container's entrypoint
+- `EXPOSE 80` - Documents that the container listens on port 80
+- `CMD ["/entrypoint.sh"]` - Runs the entrypoint script
 
 ### Step 8: Create Initial HTML File
 
@@ -462,6 +502,13 @@ Milestone1/
     └── init.js                  # Database initialization script
 ```
 
+## Container Names
+
+The application uses the following container names:
+- **Reverse Proxy**: `contnginx-m1-lm`
+- **Web Containers**: `contweb-m1-lm1`, `contweb-m1-lm2`, `contweb-m1-lm3`
+- **MongoDB**: `contmongo-m1-lm`
+
 ## How It Works
 
 1. **Startup Sequence:**
@@ -471,8 +518,8 @@ Milestone1/
 
 2. **Load Balancing:**
    - Reverse proxy receives requests on port 8085
-   - Distributes requests across 3 web containers using round-robin
-   - Each container has a unique hostname
+   - Distributes requests across 3 web containers (web1, web2, web3) using round-robin
+   - Each container has a unique hostname and custom container name
 
 3. **Dynamic Content:**
    - Each web container fetches student name from MongoDB
@@ -496,6 +543,7 @@ Milestone1/
 - Each refresh should show a different container hostname
 - Container IDs should also change
 - The student name should remain consistent across containers
+- Container names will be: `contweb-m1-lm1`, `contweb-m1-lm2`, `contweb-m1-lm3`
 
 ## Troubleshooting
 
@@ -513,7 +561,7 @@ Milestone1/
    # Check logs
    docker-compose logs
    # Check specific service
-   docker-compose logs web
+   docker-compose logs web1
    ```
 
 3. **Load balancing not working:**
@@ -545,20 +593,85 @@ docker-compose down
 docker-compose down -v
 
 # Rebuild specific service
-docker-compose build web
+docker-compose build web1
 
-# Scale web service
-docker-compose up --scale web=5
+# Check specific container logs
+docker-compose logs contweb-m1-lm1
 ```
+
+## AI Prompts and Responses
+
+### Key Prompts and AI Responses Used in Development:
+
+**Prompt 1:** "when i refresh my page the container is not changing so something is wrong with the loadbalancing"
+
+**AI Response:** Identified browser caching as the main issue and provided cache-busting solutions including:
+- Added cache-busting headers in nginx.conf
+- Added cache-busting meta tags in HTML
+- Added timestamp parameters to JavaScript fetch calls
+
+**Prompt 2:** "alles werkt nu, kun je dingen wegladen om minder code te hebben en minder nutteloze code"
+
+**AI Response:** Cleaned up the code by:
+- Removing unnecessary echo statements
+- Removing verbose comments
+- Compressing code while maintaining functionality
+- Removing unused variables
+
+**Prompt 3:** "i have to use contnginx2-m1-lm for your nginx container and contmongo-m1-lm for your MongoDBcontainer. change all he container names"
+
+**AI Response:** Updated container names and explained the difference between using individual services vs. replicas for custom naming.
+
+**Prompt 4:** "i want the names of the the load balancing containers contweb-m1-lm1 lm2 lm3"
+
+**AI Response:** Changed from using `deploy: replicas: 3` to individual services (web1, web2, web3) to allow custom container names.
+
+
+## AI Reflection
+
+### How AI Helped Me:
+
+**1. Problem Solving and Debugging:**
+The AI was instrumental in identifying and fixing the load balancing issue. When I noticed containers weren't changing on refresh, the AI immediately identified browser caching as the root cause and provided specific cache-busting solutions that worked perfectly.
+
+**2. Code Optimization:**
+The AI helped me clean up unnecessary code and comments while maintaining full functionality. This made the codebase more professional and easier to maintain.
+
+**3. Container Orchestration Understanding:**
+Through our interactions, I learned the difference between using `deploy: replicas` vs. individual services for custom container naming. The AI explained why individual services were needed for my specific naming requirements.
+
+
+### What I Learned:
+
+**1. Load Balancing Best Practices:**
+- Cache-busting is essential for load balancing verification
+- Browser caching can mask load balancing issues
+- Proper headers and meta tags are crucial
+
+**2. Docker Compose Architecture:**
+- Understanding service dependencies and startup order
+- Difference between replicas and individual services
+- Custom container naming strategies
+
+**3. Data Persistence:**
+- How Docker volumes work independently of containers
+- MongoDB initialization script behavior
+- When data persists vs. when it gets reset
+
+
+
+The AI acted as both a coding partner and a learning resource, helping me understand not just how to fix issues, but why certain solutions work and what best practices to follow. This collaborative approach significantly improved my understanding of Docker, load balancing, and container orchestration.
 
 ## Summary
 
 This project demonstrates:
-- **Horizontal scaling** with Docker Compose replicas
+- **Horizontal scaling** with individual Docker Compose services
 - **Load balancing** with NGINX reverse proxy
 - **Database integration** with MongoDB
 - **Dynamic content** that updates from database
 - **Container orchestration** with proper dependencies
 - **Cache management** for load balancing verification
+- **Custom container naming** for easy identification
+- **Data persistence** with Docker volumes for reliable data storage
 
-The application successfully distributes requests across multiple containers while maintaining consistent data from the database. 
+The application successfully distributes requests across multiple containers while maintaining consistent data from the database. The MongoDB data persists across container restarts, ensuring your student information is always available. 
